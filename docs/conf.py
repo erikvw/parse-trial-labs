@@ -6,7 +6,7 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = 'parse labs'
+project = 'parse trial labs'
 copyright = '2026, erik van widenfelt'
 author = 'erik van widenfelt'
 

@@ -3,8 +3,8 @@
    You can adapt this file completely to your liking, but it should at least
    contain the root `toctree` directive.
 
-parse labs documentation
-========================
+parse trial labs documentation
+==============================
 
 |pypi| |clinicedc|
 

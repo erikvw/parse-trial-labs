@@ -5,9 +5,9 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from parse_labs import parse_folder
-from parse_labs.parsers import parse_mnh
-from parse_labs.parsers.parse_mnh.parser import (
+from parse_trial_labs import parse_folder
+from parse_trial_labs.parsers import parse_mnh
+from parse_trial_labs.parsers.parse_mnh.parser import (
     _parse_datetime_field,
     _parse_header_field,
     _parse_result_line,
