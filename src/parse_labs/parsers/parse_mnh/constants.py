@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 
+DATETIME_FORMAT = "%d/%m/%Y %H:%M:%S"
+
 KNOWN_INVESTIGATIONS: set[str] = {
     "UREA NITROGEN",
     "CREATININE",

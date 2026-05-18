@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import re
-import sys
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
-import pandas as pd
 import pdfplumber
 
 from .constants import (
+    DATETIME_FORMAT,
     HEADER_RE,
     KNOWN_INVESTIGATIONS,
     RESULT_NO_FLAG_RE,
@@ -20,11 +21,20 @@ def _parse_header_field(text: str, pattern: str) -> str:
     return m.group(1).strip() if m else ""
 
 
-def _parse_datetime_field(text: str, label: str) -> str:
+def _parse_datetime_field(
+    text: str, label: str, *, tz: ZoneInfo | None = None
+) -> datetime | None:
     m = re.search(rf"{label}\s+(\d{{2}}/\d{{2}}/\d{{4}})\s+Time\s+(\S+)", text)
     if m:
-        return f"{m.group(1)} {m.group(2)}"
-    return ""
+        raw = f"{m.group(1)} {m.group(2)}"
+        try:
+            dt = datetime.strptime(raw, DATETIME_FORMAT)  # noqa: DTZ007
+        except ValueError:
+            return None
+        if tz:
+            dt = dt.replace(tzinfo=tz)
+        return dt
+    return None
 
 
 def _parse_result_line(line: str) -> dict | None:
@@ -43,21 +53,34 @@ def _parse_result_line(line: str) -> dict | None:
                 return None
             if inv in KNOWN_INVESTIGATIONS or _fuzzy_match_investigation(inv):
                 flag = groups.get("flag", "") or ""
+                ref_lower, ref_upper = _split_reference_range(
+                    groups["ref_range"].strip()
+                )
                 return {
                     "investigation": inv,
                     "result": groups["result"],
                     "units": groups["units"],
                     "flag": flag,
-                    "reference_range": groups["ref_range"].strip(),
+                    "reference_range_lower": ref_lower,
+                    "reference_range_upper": ref_upper,
                 }
     return None
+
+
+def _split_reference_range(ref_range: str) -> tuple[str, str]:
+    parts = ref_range.split("-")
+    if len(parts) == 2:
+        return parts[0].strip(), parts[1].strip()
+    return ref_range, ""
 
 
 def _fuzzy_match_investigation(name: str) -> bool:
     return any(name.upper() == k.upper() for k in KNOWN_INVESTIGATIONS)
 
 
-def parse_pdf(filepath: str | Path) -> list[dict]:
+def parse(
+    filepath: str | Path, *, tz: ZoneInfo | None = None
+) -> list[dict]:
     filepath = Path(filepath)
     rows = []
 
@@ -89,23 +112,23 @@ def parse_pdf(filepath: str | Path) -> list[dict]:
             )
             order_no = _parse_header_field(full_text, r"Order No\s+(\S+)")
             order_datetime = _parse_datetime_field(
-                full_text, r"Order No\s+\S+\s+Date"
+                full_text, r"Order No\s+\S+\s+Date", tz=tz
             )
             result_no = _parse_header_field(full_text, r"Result No\s+(\S+)")
             result_datetime = _parse_datetime_field(
-                full_text, r"Result No\s+\S+\s+Date"
+                full_text, r"Result No\s+\S+\s+Date", tz=tz
             )
             specimen_collected_by = _parse_header_field(
                 full_text, r"Specimen Collected By\s+(.+?)\s+Date"
             )
             specimen_collected_datetime = _parse_datetime_field(
-                full_text, r"Specimen Collected By\s+.+?\s+Date"
+                full_text, r"Specimen Collected By\s+.+?\s+Date", tz=tz
             )
             specimen_received_by = _parse_header_field(
                 full_text, r"Specimen Recieved By\s+(.+?)\s+Date"
             )
             specimen_received_datetime = _parse_datetime_field(
-                full_text, r"Specimen Recieved By\s+.+?\s+Date"
+                full_text, r"Specimen Recieved By\s+.+?\s+Date", tz=tz
             )
             sample_type = _parse_header_field(full_text, r"Sample Type\s+(\S+)")
             sample_condition = _parse_header_field(
@@ -117,13 +140,13 @@ def parse_pdf(filepath: str | Path) -> list[dict]:
                 full_text, r"Reported By\s+(.+?)\s+Date"
             )
             reported_datetime = _parse_datetime_field(
-                full_text, r"Reported By\s+.+?\s+Date"
+                full_text, r"Reported By\s+.+?\s+Date", tz=tz
             )
             verified_by = _parse_header_field(
                 full_text, r"Verified By\s+(.+?)\s+Date"
             )
             verified_datetime = _parse_datetime_field(
-                full_text, r"Verified By\s+.+?\s+Date"
+                full_text, r"Verified By\s+.+?\s+Date", tz=tz
             )
 
             header = {
@@ -169,17 +192,3 @@ def parse_pdf(filepath: str | Path) -> list[dict]:
     return rows
 
 
-def parse_folder(folder: str | Path) -> pd.DataFrame:
-    folder = Path(folder)
-    all_rows: list[dict] = []
-    for pdf_file in sorted(folder.glob("*.pdf")):
-        try:
-            all_rows.extend(parse_pdf(pdf_file))
-        except Exception as exc:
-            print(
-                f"WARNING: failed to parse {pdf_file.name}: {exc}", file=sys.stderr
-            )
-    df = pd.DataFrame(all_rows)
-    if not df.empty:
-        df["result"] = pd.to_numeric(df["result"], errors="coerce")
-    return df

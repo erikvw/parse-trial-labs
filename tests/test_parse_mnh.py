@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 import pytest
 
-from parse_labs import (
+from parse_labs import parse_folder
+from parse_labs.parsers import parse_mnh
+from parse_labs.parsers.parse_mnh.parser import (
     _parse_datetime_field,
     _parse_header_field,
     _parse_result_line,
-    parse_folder,
-    parse_pdf,
 )
 
 from .fake_pdf import (
@@ -16,7 +19,6 @@ from .fake_pdf import (
     generate_fake_haematology,
     generate_fake_immunology,
 )
-
 
 # --- Unit tests: _parse_result_line ---
 
@@ -30,7 +32,8 @@ class TestParseResultLine:
         assert result["result"] == "6.10"
         assert result["units"] == "mmol/L"
         assert result["flag"] == "High"
-        assert result["reference_range"] == "0 - 5.53"
+        assert result["reference_range_lower"] == "0"
+        assert result["reference_range_upper"] == "5.53"
 
     def test_without_flag(self):
         line = "CREATININE 75.0 umol/L 50.4 - 98.1"
@@ -40,7 +43,8 @@ class TestParseResultLine:
         assert result["result"] == "75.0"
         assert result["units"] == "umol/L"
         assert result["flag"] == ""
-        assert result["reference_range"] == "50.4 - 98.1"
+        assert result["reference_range_lower"] == "50.4"
+        assert result["reference_range_upper"] == "98.1"
 
     def test_leading_dot_result(self):
         line = "ABS MONOCYTES .4500 K/uL Normal 0 - 0.9"
@@ -54,7 +58,8 @@ class TestParseResultLine:
         line = "BASOPHILS 2.308 % High 0.02 - 0.1"
         result = _parse_result_line(line)
         assert result is not None
-        assert result["reference_range"] == "0.02 - 0.1"
+        assert result["reference_range_lower"] == "0.02"
+        assert result["reference_range_upper"] == "0.1"
 
     def test_panel_header_skipped(self):
         line = "PANEL FULL BLOOD COUNT WITH DIFFERENTIAL"
@@ -147,29 +152,37 @@ class TestParseHeaderFields:
     def test_missing_field_returns_empty(self):
         assert _parse_header_field(self.SAMPLE_HEADER, r"IP Number\s+(\S+)") == ""
 
-    def test_order_datetime(self):
+    def test_datetime_naive_without_tz(self):
         val = _parse_datetime_field(self.SAMPLE_HEADER, r"Order No\s+\S+\s+Date")
-        assert val == "01/01/2026 10:00:00"
+        assert val == datetime(2026, 1, 1, 10, 0, 0)  # noqa: DTZ001
+        assert val.tzinfo is None
+
+    def test_datetime_aware_with_tz(self):
+        tz = ZoneInfo("Africa/Dar_es_Salaam")
+        val = _parse_datetime_field(self.SAMPLE_HEADER, r"Order No\s+\S+\s+Date", tz=tz)
+        assert val == datetime(2026, 1, 1, 10, 0, 0, tzinfo=tz)
+        assert val.tzinfo is tz
 
     def test_result_datetime(self):
         val = _parse_datetime_field(self.SAMPLE_HEADER, r"Result No\s+\S+\s+Date")
-        assert val == "01/01/2026 14:30:00"
+        assert val == datetime(2026, 1, 1, 14, 30, 0)  # noqa: DTZ001
 
     def test_specimen_collected_datetime(self):
-        val = _parse_datetime_field(
-            self.SAMPLE_HEADER, r"Specimen Collected By\s+.+?\s+Date"
-        )
-        assert val == "01/01/2026 10:05:00"
+        val = _parse_datetime_field(self.SAMPLE_HEADER, r"Specimen Collected By\s+.+?\s+Date")
+        assert val == datetime(2026, 1, 1, 10, 5, 0)  # noqa: DTZ001
 
     def test_specimen_received_datetime(self):
-        val = _parse_datetime_field(
-            self.SAMPLE_HEADER, r"Specimen Recieved By\s+.+?\s+Date"
-        )
-        assert val == "01/01/2026 10:15:00"
+        val = _parse_datetime_field(self.SAMPLE_HEADER, r"Specimen Recieved By\s+.+?\s+Date")
+        assert val == datetime(2026, 1, 1, 10, 15, 0)  # noqa: DTZ001
 
     def test_verified_datetime(self):
         val = _parse_datetime_field(self.SAMPLE_HEADER, r"Verified By\s+.+?\s+Date")
-        assert val == "01/01/2026 15:00:00"
+        assert val == datetime(2026, 1, 1, 15, 0, 0)  # noqa: DTZ001
+
+    def test_datetime_returns_none_when_missing(self):
+        text = "Verified By Date Time\n"
+        val = _parse_datetime_field(text, r"Verified By\s+.+?\s+Date")
+        assert val is None
 
     def test_verified_by_empty_when_missing(self):
         text = "Verified By Date Time\n"
@@ -177,7 +190,7 @@ class TestParseHeaderFields:
         assert val == ""
 
 
-# --- Integration tests: parse_pdf with fake PDFs ---
+# --- Integration tests: parse_mnh with fake PDFs ---
 
 
 class TestParsePdfChemistry:
@@ -185,7 +198,7 @@ class TestParsePdfChemistry:
     def _setup(self, tmp_path):
         self.pdf_path = tmp_path / "chemistry.pdf"
         generate_fake_chemistry(self.pdf_path)
-        self.rows = parse_pdf(self.pdf_path)
+        self.rows = parse_mnh(self.pdf_path)
 
     def test_row_count(self):
         assert len(self.rows) == 13
@@ -208,7 +221,7 @@ class TestParsePdfChemistry:
 
     def test_specimen_collected(self):
         assert self.rows[0]["specimen_collected_by"] == "NURSE JOHN SMITH"
-        assert self.rows[0]["specimen_collected_datetime"] == "01/01/2026 10:05:00"
+        assert self.rows[0]["specimen_collected_datetime"] == datetime(2026, 1, 1, 10, 5, 0)  # noqa: DTZ001
 
     def test_investigations_present(self):
         names = [r["investigation"] for r in self.rows]
@@ -227,7 +240,15 @@ class TestParsePdfChemistry:
 
     def test_verified_by(self):
         assert self.rows[0]["verified_by"] == "SENIOR TECH BOB"
-        assert self.rows[0]["verified_datetime"] == "01/01/2026 15:00:00"
+        assert self.rows[0]["verified_datetime"] == datetime(2026, 1, 1, 15, 0, 0)  # noqa: DTZ001
+
+    def test_datetimes_naive_without_tz(self):
+        assert self.rows[0]["order_datetime"].tzinfo is None
+
+    def test_datetimes_aware_with_tz(self, tmp_path):
+        tz = ZoneInfo("Africa/Dar_es_Salaam")
+        rows = parse_mnh(tmp_path / "chemistry.pdf", tz=tz)
+        assert rows[0]["order_datetime"].tzinfo is tz
 
 
 class TestParsePdfHaematology:
@@ -235,7 +256,7 @@ class TestParsePdfHaematology:
     def _setup(self, tmp_path):
         self.pdf_path = tmp_path / "haematology.pdf"
         generate_fake_haematology(self.pdf_path)
-        self.rows = parse_pdf(self.pdf_path)
+        self.rows = parse_mnh(self.pdf_path)
 
     def test_row_count(self):
         assert len(self.rows) == 19
@@ -257,12 +278,25 @@ class TestParsePdfHaematology:
     def test_all_haem_investigations(self):
         names = {r["investigation"] for r in self.rows}
         expected = {
-            "WBC", "ABS NEUTROPHIL", "NEUTROPHILS",
-            "LYMPHOCYTES (ABSOLUTE)", "LYMPHOCYTES",
-            "ABS MONOCYTES", "MONOCYTES",
-            "ABS EOSINOPHILS", "EOSINOPHILS",
-            "ABS BASOPHILS", "BASOPHILS",
-            "RBC", "HGB", "HCT", "MCV", "MCH", "MCHC", "RDW", "PLATELETS",
+            "WBC",
+            "ABS NEUTROPHIL",
+            "NEUTROPHILS",
+            "LYMPHOCYTES (ABSOLUTE)",
+            "LYMPHOCYTES",
+            "ABS MONOCYTES",
+            "MONOCYTES",
+            "ABS EOSINOPHILS",
+            "EOSINOPHILS",
+            "ABS BASOPHILS",
+            "BASOPHILS",
+            "RBC",
+            "HGB",
+            "HCT",
+            "MCV",
+            "MCH",
+            "MCHC",
+            "RDW",
+            "PLATELETS",
         }
         assert names == expected
 
@@ -272,7 +306,7 @@ class TestParsePdfImmunology:
     def _setup(self, tmp_path):
         self.pdf_path = tmp_path / "immunology.pdf"
         generate_fake_immunology(self.pdf_path)
-        self.rows = parse_pdf(self.pdf_path)
+        self.rows = parse_mnh(self.pdf_path)
 
     def test_row_count(self):
         assert len(self.rows) == 1
@@ -285,7 +319,8 @@ class TestParsePdfImmunology:
         assert self.rows[0]["result"] == "8.50"
         assert self.rows[0]["units"] == "uIU/mL"
         assert self.rows[0]["flag"] == "Normal"
-        assert self.rows[0]["reference_range"] == "4.03 - 23.46"
+        assert self.rows[0]["reference_range_lower"] == "4.03"
+        assert self.rows[0]["reference_range_upper"] == "23.46"
 
 
 # --- Integration test: parse_folder ---
@@ -296,7 +331,7 @@ class TestParseFolder:
     def _setup(self, tmp_path):
         self.folder = tmp_path / "labs"
         generate_fake_folder(self.folder)
-        self.df = parse_folder(self.folder)
+        self.df = parse_folder(self.folder, parse_mnh, verbose=False)
 
     def test_total_rows(self):
         assert len(self.df) == 33  # 13 + 19 + 1
@@ -309,19 +344,60 @@ class TestParseFolder:
 
     def test_all_columns_present(self):
         expected_cols = {
-            "source_file", "report_type", "result_status",
-            "name_id", "age", "sex", "ordered_by", "clinic_ward",
-            "order_no", "order_datetime", "result_no", "result_datetime",
-            "specimen_collected_by", "specimen_collected_datetime",
-            "specimen_received_by", "specimen_received_datetime",
-            "sample_type", "sample_condition", "sample_no", "priority",
-            "reported_by", "reported_datetime", "verified_by", "verified_datetime",
-            "investigation", "result", "units", "flag", "reference_range",
+            "source_file",
+            "report_type",
+            "result_status",
+            "name_id",
+            "age",
+            "sex",
+            "ordered_by",
+            "clinic_ward",
+            "order_no",
+            "order_datetime",
+            "result_no",
+            "result_datetime",
+            "specimen_collected_by",
+            "specimen_collected_datetime",
+            "specimen_received_by",
+            "specimen_received_datetime",
+            "sample_type",
+            "sample_condition",
+            "sample_no",
+            "priority",
+            "reported_by",
+            "reported_datetime",
+            "verified_by",
+            "verified_datetime",
+            "investigation",
+            "result",
+            "units",
+            "flag",
+            "reference_range_lower",
+            "reference_range_upper",
         }
         assert expected_cols == set(self.df.columns)
+
+    def test_datetime_columns_are_datetime(self):
+        for col in [
+            "order_datetime",
+            "result_datetime",
+            "specimen_collected_datetime",
+            "specimen_received_datetime",
+            "reported_datetime",
+            "verified_datetime",
+        ]:
+            assert self.df[col].dtype.kind == "M", f"{col} not datetime"
+
+    def test_datetime_aware_with_tz(self, tmp_path):
+        folder = tmp_path / "labs_tz"
+        generate_fake_folder(folder)
+        tz = ZoneInfo("Africa/Dar_es_Salaam")
+        df = parse_folder(folder, parse_mnh, tz=tz, verbose=False)
+        val = df["order_datetime"].iloc[0]
+        assert val.tzinfo is not None
 
     def test_empty_folder(self, tmp_path):
         empty = tmp_path / "empty"
         empty.mkdir()
-        df = parse_folder(empty)
+        df = parse_folder(empty, parse_mnh, verbose=False)
         assert len(df) == 0

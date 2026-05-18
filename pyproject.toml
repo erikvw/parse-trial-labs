@@ -1,5 +1,5 @@
 [project]
-name = "parse-pdf"
+name = "parse-labs"
 version = "0.1.0"
 description = "Parse laboratory result PDFs from Muhimbili National Hospital, Dar Es Salaam, Tanzania"
 authors = [
@@ -12,7 +12,7 @@ keywords = [
     "laboratory results",
     "Muhimbili",
 ]
-readme = "README.md"
+readme = "README.rst"
 classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
@@ -21,16 +21,29 @@ classifiers = [
 ]
 license = "GPL-3.0-or-later"
 license-files = ["LICEN[CS]E*"]
-requires-python = ">=3.14"
+requires-python = ">=3.12"
 dependencies = [
     "pandas>=3.0.3",
     "pdfplumber>=0.11.9",
+    "tqdm>=4.66",
 ]
 
 [dependency-groups]
 dev = [
     "pytest>=8.0",
     "fpdf2>=2.8",
+    "ruff>=0.12.5",
+]
+
+lint = [
+    "ruff>=0.12.5",
+]
+
+docs = [
+    "furo>=2025.7.19",
+    "sphinx>=8.2.3",
+    "sphinx-design>=0.6.1",
+    "sphinx-inline-tabs>=2023.4.21",
 ]
 
 [project.scripts]
@@ -47,3 +60,65 @@ module-name = "parse_labs"
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 95
+indent-width = 4
+target-version = "py312"
+extend-exclude = [
+    "migrations",
+    "*/view_definition.py",
+    ".tox",
+    ".venv",
+    ".ipynb",
+    "src/meta_analytics/notebooks",
+    "src/meta_spfq/notebooks",
+    "docs/updates/0.1.65/update_1_65_renamed_fields.py",
+    "docs/conf.py",
+]
+
+[tool.ruff.lint]
+select = [
+    "A",
+    "ARG",
+    "B",
+    "C90",
+    "COM",
+    "DJ",
+    "DTZ",
+    "E",
+    "F",
+    "FA",
+    "FURB",
+    "I",
+    "INT",
+    "N",
+    "PD",
+    "PERF",
+    "PL",
+    "PLR",
+    "PTH",
+    "RET",
+    "RUF",
+    "S",
+    "SIM",
+    "T20",
+    "TRY",
+    "UP",
+    "W",
+    # "FIX",
+]
+ignore = ["S101", "DJ008", "DJ007", "DJ006", "COM812", "PLC0206", "PLR2004", "TRY003"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 12
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+exclude = ["*.ipynb"]
