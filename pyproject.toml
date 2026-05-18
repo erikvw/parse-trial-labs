@@ -1,6 +1,6 @@
 [project]
 name = "parse-labs"
-version = "0.1.0"
+version = "0.2.0"
 description = "Parse laboratory result PDFs from Muhimbili National Hospital, Dar Es Salaam, Tanzania"
 authors = [
     { name = "Erik van Widenfelt", email = "ew2789@gmail.com" },
