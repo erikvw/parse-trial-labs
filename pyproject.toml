@@ -1,5 +1,5 @@
 [project]
-name = "parse-labs"
+name = "parse-trial-labs"
 version = "0.3.0"
 description = "Parse laboratory result PDFs from Muhimbili National Hospital, Dar Es Salaam, Tanzania"
 authors = [

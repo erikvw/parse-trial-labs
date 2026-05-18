@@ -1,5 +1,5 @@
-parse-labs
-==========
+parse-trial-labs
+================
 
 Parsers
 -------

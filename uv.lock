@@ -568,7 +568,7 @@ wheels = [
 ]
 
 [[package]]
-name = "parse-labs"
+name = "parse-trial-labs"
 version = "0.3.0"
 source = { editable = "." }
 dependencies = [
