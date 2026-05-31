@@ -11,7 +11,7 @@ from .parsers import parse_mnh
 
 def main() -> None:
     if len(sys.argv) < 2:
-        sys.stdout.write(f"Usage: {sys.argv[0]} <pdf_file_or_folder>\n", file=sys.stderr)
+        sys.stdout.write(f"Usage: {sys.argv[0]} <pdf_file_or_folder>\n")
         sys.exit(1)
 
     target = Path(sys.argv[1])
@@ -23,7 +23,7 @@ def main() -> None:
         if not df.empty:
             df["result"] = pd.to_numeric(df["result"], errors="coerce")
     else:
-        sys.stdout.write(f"Error: {target} is not a PDF file or directory\n", file=sys.stderr)
+        sys.stdout.write(f"Error: {target} is not a PDF file or directory\n")
         sys.exit(1)
 
     pd.set_option("display.max_columns", None)
