@@ -1,0 +1,50 @@
+{
+  "MNH": {
+    "UTESTIDS": {
+      "NEUTROPHILS": "neutrophil_diff",
+      "ABS NEUTROPHIL": "neutrophil",
+      "LYMPHOCYTES": "lymphocyte_diff",
+      "LYMPHOCYTES (ABSOLUTE)": "lymphocyte",
+      "ABS MONOCYTES": "mono#",
+      "MONOCYTES": "mono%",
+      "ABS BASOPHILS": "baso#",
+      "BASOPHILS": "baso%",
+      "ABS EOSINOPHILS": "eos#",
+      "EOSINOPHILS": "eos%",
+      "RDW": "rdw",
+      "WBC": "wbc",
+      "RBC": "rbc",
+      "HGB": "haemoglobin",
+      "HCT": "hct",
+      "MCV": "mcv",
+      "MCH": "mch",
+      "MCHC": "mchc",
+      "PLATELETS": "platelets",
+      "UREA NITROGEN": "urea",
+      "CREATININE": "creatinine",
+      "URIC ACID": "uric_acid",
+      "AST(SGOT)": "ast",
+      "ALT(SGPT)": "alt",
+      "ALKALINE PHOSPHATASE": "alp",
+      "AMYLASE": "amylase",
+      "GAMMA GT": "ggt",
+      "ALBUMIN": "albumin",
+      "CHOLESTEROL": "chol",
+      "HDL CHOLESTEROL": "hdl",
+      "LDL CHOL (CALC)": "ldl",
+      "TRIGLYCERIDES": "trig",
+      "INSULIN": "ins"
+    },
+    "UNITS": {
+      "U/L": "IU/L",
+      "K/uL": "10^9/L",
+      "k/uL": "10^9/L",
+      "M/uL": "10^12/L",
+      "10*3/uL": "10^3/L",
+      "10*9/L": "10^9/L",
+      "fL": "fL/cell",
+      "pg": "pg/cell",
+      "µmol/L": "umol/L"
+    }
+  }
+}
