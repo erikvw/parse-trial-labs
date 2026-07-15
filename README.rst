@@ -8,6 +8,23 @@ Parsers
 
 * ``parse_mnh``: Parse Muhimbili National Hospital lab result PDFs
 
+
+To get an App Password for a Gmail account:
+
+Go to myaccount.google.com
+
+Security (left sidebar)
+
+Under "How you sign in to Google", confirm 2-Step Verification is on (required — you can't create app passwords without it)
+
+Search for "App Passwords" in the search bar at the top, or navigate to Security > 2-Step Verification > App Passwords
+
+Enter a name (e.g. "lab results download") and click Create
+
+Google shows a 16-character password — copy it immediately, you won't see it again
+
+That 16-character password is what the script will use in place of your regular Gmail password.
+
 Running tests
 -------------
 

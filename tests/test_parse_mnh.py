@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import shutil
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
+from fpdf import FPDF
 
 from parse_trial_labs import parse_folder
 from parse_trial_labs.parsers import parse_mnh
@@ -14,6 +16,7 @@ from parse_trial_labs.parsers.parse_mnh.parser import (
 )
 
 from .fake_pdf import (
+    CHEMISTRY_TEXT,
     generate_fake_chemistry,
     generate_fake_folder,
     generate_fake_haematology,
@@ -28,9 +31,9 @@ class TestParseResultLine:
         line = "CHOLESTEROL 6.10 mmol/L High 0 - 5.53"
         result = _parse_result_line(line)
         assert result is not None
-        assert result["investigation"] == "CHOLESTEROL"
+        assert result["source_utestid"] == "CHOLESTEROL"
         assert result["result"] == "6.10"
-        assert result["units"] == "mmol/L"
+        assert result["source_units"] == "mmol/L"
         assert result["flag"] == "High"
         assert result["reference_range_lower"] == "0"
         assert result["reference_range_upper"] == "5.53"
@@ -39,9 +42,9 @@ class TestParseResultLine:
         line = "CREATININE 75.0 umol/L 50.4 - 98.1"
         result = _parse_result_line(line)
         assert result is not None
-        assert result["investigation"] == "CREATININE"
+        assert result["source_utestid"] == "CREATININE"
         assert result["result"] == "75.0"
-        assert result["units"] == "umol/L"
+        assert result["source_units"] == "umol/L"
         assert result["flag"] == ""
         assert result["reference_range_lower"] == "50.4"
         assert result["reference_range_upper"] == "98.1"
@@ -50,9 +53,9 @@ class TestParseResultLine:
         line = "ABS MONOCYTES .4500 K/uL Normal 0 - 0.9"
         result = _parse_result_line(line)
         assert result is not None
-        assert result["investigation"] == "ABS MONOCYTES"
+        assert result["source_utestid"] == "ABS MONOCYTES"
         assert result["result"] == ".4500"
-        assert result["units"] == "K/uL"
+        assert result["source_units"] == "K/uL"
 
     def test_leading_dot_ref_range(self):
         line = "BASOPHILS 2.308 % High 0.02 - 0.1"
@@ -66,7 +69,7 @@ class TestParseResultLine:
         result = _parse_result_line(line)
         assert result is None
 
-    def test_unknown_investigation_rejected(self):
+    def test_unknown_source_utestid_rejected(self):
         line = "BOGUS TEST 1.23 mg/dL 0 - 5"
         result = _parse_result_line(line)
         assert result is None
@@ -93,13 +96,13 @@ class TestParseResultLine:
         line = "ALT(SGPT) 22.50 U/L Normal 0 - 55"
         result = _parse_result_line(line)
         assert result is not None
-        assert result["investigation"] == "ALT(SGPT)"
+        assert result["source_utestid"] == "ALT(SGPT)"
 
     def test_calc_in_name(self):
         line = "LDL CHOL (CALC) 3.50 mmol/L High 0 - 3.34"
         result = _parse_result_line(line)
         assert result is not None
-        assert result["investigation"] == "LDL CHOL (CALC)"
+        assert result["source_utestid"] == "LDL CHOL (CALC)"
 
 
 # --- Unit tests: _parse_header_field / _parse_datetime_field ---
@@ -223,19 +226,19 @@ class TestParsePdfChemistry:
         assert self.rows[0]["specimen_collected_by"] == "NURSE JOHN SMITH"
         assert self.rows[0]["specimen_collected_datetime"] == datetime(2026, 1, 1, 10, 5, 0)  # noqa: DTZ001
 
-    def test_investigations_present(self):
-        names = [r["investigation"] for r in self.rows]
+    def test_source_utestids_present(self):
+        names = [r["source_utestid"] for r in self.rows]
         assert "UREA NITROGEN" in names
         assert "CREATININE" in names
         assert "LDL CHOL (CALC)" in names
 
     def test_flagged_result(self):
-        cholesterol = next(r for r in self.rows if r["investigation"] == "CHOLESTEROL")
+        cholesterol = next(r for r in self.rows if r["source_utestid"] == "CHOLESTEROL")
         assert cholesterol["flag"] == "High"
         assert cholesterol["result"] == "6.10"
 
     def test_unflagged_result(self):
-        urea = next(r for r in self.rows if r["investigation"] == "UREA NITROGEN")
+        urea = next(r for r in self.rows if r["source_utestid"] == "UREA NITROGEN")
         assert urea["flag"] == ""
 
     def test_verified_by(self):
@@ -268,15 +271,15 @@ class TestParsePdfHaematology:
         assert self.rows[0]["result_status"] == "Final Result"
 
     def test_panel_header_excluded(self):
-        names = [r["investigation"] for r in self.rows]
+        names = [r["source_utestid"] for r in self.rows]
         assert "PANEL FULL BLOOD COUNT WITH DIFFERENTIAL" not in names
 
     def test_leading_dot_result_parsed(self):
-        mono = next(r for r in self.rows if r["investigation"] == "ABS MONOCYTES")
+        mono = next(r for r in self.rows if r["source_utestid"] == "ABS MONOCYTES")
         assert mono["result"] == ".4500"
 
-    def test_all_haem_investigations(self):
-        names = {r["investigation"] for r in self.rows}
+    def test_all_haem_source_utestids(self):
+        names = {r["source_utestid"] for r in self.rows}
         expected = {
             "WBC",
             "ABS NEUTROPHIL",
@@ -315,9 +318,9 @@ class TestParsePdfImmunology:
         assert self.rows[0]["report_type"] == "IMMUNOLOGY"
 
     def test_insulin_result(self):
-        assert self.rows[0]["investigation"] == "INSULIN"
+        assert self.rows[0]["source_utestid"] == "INSULIN"
         assert self.rows[0]["result"] == "8.50"
-        assert self.rows[0]["units"] == "uIU/mL"
+        assert self.rows[0]["source_units"] == "uIU/mL"
         assert self.rows[0]["flag"] == "Normal"
         assert self.rows[0]["reference_range_lower"] == "4.03"
         assert self.rows[0]["reference_range_upper"] == "23.46"
@@ -348,6 +351,8 @@ class TestParseFolder:
             "report_type",
             "result_status",
             "name_id",
+            "subject_identifier",
+            "screening_identifier",
             "age",
             "sex",
             "ordered_by",
@@ -368,9 +373,9 @@ class TestParseFolder:
             "reported_datetime",
             "verified_by",
             "verified_datetime",
-            "investigation",
+            "source_utestid",
             "result",
-            "units",
+            "source_units",
             "flag",
             "reference_range_lower",
             "reference_range_upper",
@@ -401,3 +406,67 @@ class TestParseFolder:
         empty.mkdir()
         df = parse_folder(empty, parse_mnh, verbose=False)
         assert len(df) == 0
+
+
+# --- Integration tests: parse_folder duplicate-file detection ---
+
+
+class TestParseFolderDuplicateFiles:
+    def test_byte_identical_duplicate_skipped(self, tmp_path):
+        folder = tmp_path / "labs"
+        folder.mkdir()
+        generate_fake_chemistry(folder / "report_a.pdf")
+        shutil.copyfile(folder / "report_a.pdf", folder / "report_a_copy.pdf")
+
+        df = parse_folder(folder, parse_mnh, verbose=False)
+
+        assert set(df["source_file"].unique()) == {"report_a.pdf"}
+        assert len(df) == 13
+
+    def test_same_content_different_bytes_duplicate_skipped(self, tmp_path):
+        folder = tmp_path / "labs"
+        folder.mkdir()
+        generate_fake_chemistry(folder / "report_a.pdf")
+
+        # Same visible text, different embedded metadata -> different bytes.
+        pdf = FPDF()
+        pdf.set_title("resaved copy")
+        pdf.add_page()
+        pdf.set_font("Helvetica", size=8)
+        for line in CHEMISTRY_TEXT.strip().split("\n"):
+            pdf.cell(0, 4, line, new_x="LMARGIN", new_y="NEXT")
+        pdf.output(str(folder / "report_a_resaved.pdf"))
+
+        assert (folder / "report_a.pdf").read_bytes() != (
+            folder / "report_a_resaved.pdf"
+        ).read_bytes()
+
+        df = parse_folder(folder, parse_mnh, verbose=False)
+
+        assert set(df["source_file"].unique()) == {"report_a.pdf"}
+        assert len(df) == 13
+
+    def test_duplicate_files_logged(self, tmp_path):
+        folder = tmp_path / "labs"
+        folder.mkdir()
+        generate_fake_chemistry(folder / "report_a.pdf")
+        shutil.copyfile(folder / "report_a.pdf", folder / "report_a_copy.pdf")
+        log_path = tmp_path / "session.log"
+
+        parse_folder(folder, parse_mnh, verbose=False, log_path=log_path)
+
+        log_text = log_path.read_text()
+        assert "report_a_copy.pdf" in log_text
+        assert "report_a.pdf" in log_text
+
+    def test_distinct_files_not_flagged(self, tmp_path):
+        folder = tmp_path / "labs"
+        generate_fake_folder(folder)
+
+        df = parse_folder(folder, parse_mnh, verbose=False)
+
+        assert set(df["source_file"].unique()) == {
+            "FKP_chemistry.pdf",
+            "FKP_haematology.pdf",
+            "FKP_immunology.pdf",
+        }

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import contextlib
+import logging
 import re
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -9,11 +12,13 @@ import pdfplumber
 
 from .constants import (
     DATETIME_FORMAT,
-    HEADER_RE,
+    HEADER_PATTERN,
     KNOWN_INVESTIGATIONS,
-    RESULT_NO_FLAG_RE,
-    RESULT_RE,
+    RESULT_NO_FLAG_PATTERN,
+    RESULT_PATTERN,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _parse_header_field(text: str, pattern: str) -> str:
@@ -38,28 +43,28 @@ def _parse_datetime_field(
 
 
 def _parse_result_line(line: str) -> dict | None:
-    """Try to parse an investigation result line.
+    """Try to parse an source_utestid result line.
 
     Handles two layouts seen in MNH PDFs:
       1) INVESTIGATION  result units  Flag  ref_low - ref_high
       2) INVESTIGATION  result units       ref_low - ref_high   (no flag)
     """
-    for regex in [RESULT_RE, RESULT_NO_FLAG_RE]:
+    for regex in [RESULT_PATTERN, RESULT_NO_FLAG_PATTERN]:
         m = regex.match(line)
         if m:
             groups = m.groupdict()
-            inv = groups["investigation"].strip()
-            if inv.startswith("PANEL"):
+            source_utestid = groups["source_utestid"].strip()
+            if source_utestid.startswith("PANEL"):
                 return None
-            if inv in KNOWN_INVESTIGATIONS or _fuzzy_match_investigation(inv):
+            if source_utestid in KNOWN_INVESTIGATIONS or _fuzzy_match_source_utestid(
+                source_utestid
+            ):
                 flag = groups.get("flag", "") or ""
-                ref_lower, ref_upper = _split_reference_range(
-                    groups["ref_range"].strip()
-                )
+                ref_lower, ref_upper = _split_reference_range(groups["ref_range"].strip())
                 return {
-                    "investigation": inv,
+                    "source_utestid": source_utestid,
                     "result": groups["result"],
-                    "units": groups["units"],
+                    "source_units": groups["source_units"],
                     "flag": flag,
                     "reference_range_lower": ref_lower,
                     "reference_range_upper": ref_upper,
@@ -74,12 +79,60 @@ def _split_reference_range(ref_range: str) -> tuple[str, str]:
     return ref_range, ""
 
 
-def _fuzzy_match_investigation(name: str) -> bool:
+def _fuzzy_match_source_utestid(name: str) -> bool:
     return any(name.upper() == k.upper() for k in KNOWN_INVESTIGATIONS)
 
 
+_DUPLICATE_COMPARE_FIELDS = (
+    "result",
+    "source_units",
+    "flag",
+    "reference_range_lower",
+    "reference_range_upper",
+)
+
+
+def _dedupe_result_rows(rows: list[dict], filepath: Path) -> list[dict]:
+    """Collapse repeated result lines for the same order/investigation.
+
+    Some MNH PDFs render each result line twice (a text-extraction artifact
+    of the report layout). If the repeated lines agree, keep one copy; if
+    they disagree, the source data is ambiguous and we refuse to guess.
+    """
+    seen: dict[tuple, dict] = {}
+    deduped: list[dict] = []
+    for row in rows:
+        key = (row["order_no"], row["result_no"], row["sample_no"], row["source_utestid"])
+        existing = seen.get(key)
+        if existing is None:
+            seen[key] = row
+            deduped.append(row)
+            continue
+        mismatches = {
+            field: (existing[field], row[field])
+            for field in _DUPLICATE_COMPARE_FIELDS
+            if existing[field] != row[field]
+        }
+        if mismatches:
+            raise ValueError(
+                f"Conflicting duplicate result within PDF. See {row['source_utestid']!r} in "
+                f"{filepath.name} (order_no={row['order_no']!r}): {mismatches}"
+            )
+        logger.warning(
+            "Duplicate result collapsed: %s in %s (order_no=%s)",
+            row["source_utestid"],
+            filepath.name,
+            row["order_no"],
+            extra={"source_file": filepath.name, "source_utestid": row["source_utestid"]},
+        )
+    return deduped
+
+
 def parse(
-    filepath: str | Path, *, tz: ZoneInfo | None = None
+    filepath: str | Path,
+    *,
+    tz: ZoneInfo | None = None,
+    is_valid_identifier_func: Callable | None = None,
 ) -> list[dict]:
     filepath = Path(filepath)
     rows = []
@@ -95,7 +148,7 @@ def parse(
             report_type = ""
             result_status = ""
             for line in lines:
-                m = HEADER_RE.match(line.strip())
+                m = HEADER_PATTERN.match(line.strip())
                 if m:
                     report_type = m.group("report_type").strip()
                     result_status = m.group("result_status").strip()
@@ -104,16 +157,10 @@ def parse(
             name_id = _parse_header_field(full_text, r"Name\s+(\S+)")
             age = _parse_header_field(full_text, r"Age\s+(\d+)")
             sex = _parse_header_field(full_text, r"Sex\s+(\w+)")
-            ordered_by = _parse_header_field(
-                full_text, r"Ordered By\s+(.+?)(?:\s+Contact)"
-            )
-            clinic_ward = _parse_header_field(
-                full_text, r"Clinic / Ward\s+(.+?)(?:\n|$)"
-            )
+            ordered_by = _parse_header_field(full_text, r"Ordered By\s+(.+?)(?:\s+Contact)")
+            clinic_ward = _parse_header_field(full_text, r"Clinic / Ward\s+(.+?)(?:\n|$)")
             order_no = _parse_header_field(full_text, r"Order No\s+(\S+)")
-            order_datetime = _parse_datetime_field(
-                full_text, r"Order No\s+\S+\s+Date", tz=tz
-            )
+            order_datetime = _parse_datetime_field(full_text, r"Order No\s+\S+\s+Date", tz=tz)
             result_no = _parse_header_field(full_text, r"Result No\s+(\S+)")
             result_datetime = _parse_datetime_field(
                 full_text, r"Result No\s+\S+\s+Date", tz=tz
@@ -136,17 +183,19 @@ def parse(
             )
             sample_no = _parse_header_field(full_text, r"Sample No\s+(\S+)")
             priority = _parse_header_field(full_text, r"Priority\s+(\w+)")
-            reported_by = _parse_header_field(
-                full_text, r"Reported By\s+(.+?)\s+Date"
-            )
+            reported_by = _parse_header_field(full_text, r"Reported By\s+(.+?)\s+Date")
             reported_datetime = _parse_datetime_field(
                 full_text, r"Reported By\s+.+?\s+Date", tz=tz
             )
-            verified_by = _parse_header_field(
-                full_text, r"Verified By\s+(.+?)\s+Date"
-            )
+            verified_by = _parse_header_field(full_text, r"Verified By\s+(.+?)\s+Date")
             verified_datetime = _parse_datetime_field(
                 full_text, r"Verified By\s+.+?\s+Date", tz=tz
+            )
+
+            # parse name_id
+            subject_identifier, screening_identifier = parse_name_id(
+                name_id,
+                is_valid_identifier_func,
             )
 
             header = {
@@ -154,6 +203,8 @@ def parse(
                 "report_type": report_type,
                 "result_status": result_status,
                 "name_id": name_id,
+                "subject_identifier": subject_identifier,
+                "screening_identifier": screening_identifier,
                 "age": age,
                 "sex": sex,
                 "ordered_by": ordered_by,
@@ -185,10 +236,32 @@ def parse(
                 if in_results:
                     if stripped.startswith("Reported By"):
                         break
-                    parsed = _parse_result_line(stripped)
-                    if parsed:
-                        rows.append({**header, **parsed})
+                    result_body = _parse_result_line(stripped)
+                    if result_body:
+                        rows.append({**header, **result_body})
 
-    return rows
+    return _dedupe_result_rows(rows, filepath)
 
 
+def extract_identifier_from_name_id(name_id: str) -> str:
+    if "/" in name_id:
+        name_id = name_id.replace("//", "/")
+        return name_id.split("/", 1)[1]
+    return name_id
+
+
+def parse_name_id(
+    name_id: str,
+    is_valid_identifier_func: Callable | None,
+):
+    subject_identifier = ""
+    screening_identifier = ""
+    if is_valid_identifier_func is not None:
+        identifier = extract_identifier_from_name_id(name_id)
+        screening_identifier = "".join(re.findall(r"[0-9A-Z]", identifier))
+        if len(screening_identifier) != 8:
+            screening_identifier = ""
+            with contextlib.suppress(ValueError):
+                if is_valid_identifier_func(identifier):
+                    subject_identifier = identifier
+    return subject_identifier, screening_identifier
