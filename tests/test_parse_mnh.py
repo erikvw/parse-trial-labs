@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import shutil
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 import pytest
+from fpdf import FPDF
 
 from parse_trial_labs import parse_folder
 from parse_trial_labs.parsers import parse_mnh
@@ -14,6 +16,7 @@ from parse_trial_labs.parsers.parse_mnh.parser import (
 )
 
 from .fake_pdf import (
+    CHEMISTRY_TEXT,
     generate_fake_chemistry,
     generate_fake_folder,
     generate_fake_haematology,
@@ -403,3 +406,67 @@ class TestParseFolder:
         empty.mkdir()
         df = parse_folder(empty, parse_mnh, verbose=False)
         assert len(df) == 0
+
+
+# --- Integration tests: parse_folder duplicate-file detection ---
+
+
+class TestParseFolderDuplicateFiles:
+    def test_byte_identical_duplicate_skipped(self, tmp_path):
+        folder = tmp_path / "labs"
+        folder.mkdir()
+        generate_fake_chemistry(folder / "report_a.pdf")
+        shutil.copyfile(folder / "report_a.pdf", folder / "report_a_copy.pdf")
+
+        df = parse_folder(folder, parse_mnh, verbose=False)
+
+        assert set(df["source_file"].unique()) == {"report_a.pdf"}
+        assert len(df) == 13
+
+    def test_same_content_different_bytes_duplicate_skipped(self, tmp_path):
+        folder = tmp_path / "labs"
+        folder.mkdir()
+        generate_fake_chemistry(folder / "report_a.pdf")
+
+        # Same visible text, different embedded metadata -> different bytes.
+        pdf = FPDF()
+        pdf.set_title("resaved copy")
+        pdf.add_page()
+        pdf.set_font("Helvetica", size=8)
+        for line in CHEMISTRY_TEXT.strip().split("\n"):
+            pdf.cell(0, 4, line, new_x="LMARGIN", new_y="NEXT")
+        pdf.output(str(folder / "report_a_resaved.pdf"))
+
+        assert (folder / "report_a.pdf").read_bytes() != (
+            folder / "report_a_resaved.pdf"
+        ).read_bytes()
+
+        df = parse_folder(folder, parse_mnh, verbose=False)
+
+        assert set(df["source_file"].unique()) == {"report_a.pdf"}
+        assert len(df) == 13
+
+    def test_duplicate_files_logged(self, tmp_path):
+        folder = tmp_path / "labs"
+        folder.mkdir()
+        generate_fake_chemistry(folder / "report_a.pdf")
+        shutil.copyfile(folder / "report_a.pdf", folder / "report_a_copy.pdf")
+        log_path = tmp_path / "session.log"
+
+        parse_folder(folder, parse_mnh, verbose=False, log_path=log_path)
+
+        log_text = log_path.read_text()
+        assert "report_a_copy.pdf" in log_text
+        assert "report_a.pdf" in log_text
+
+    def test_distinct_files_not_flagged(self, tmp_path):
+        folder = tmp_path / "labs"
+        generate_fake_folder(folder)
+
+        df = parse_folder(folder, parse_mnh, verbose=False)
+
+        assert set(df["source_file"].unique()) == {
+            "FKP_chemistry.pdf",
+            "FKP_haematology.pdf",
+            "FKP_immunology.pdf",
+        }
