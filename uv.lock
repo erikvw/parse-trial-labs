@@ -572,7 +572,7 @@ wheels = [
 
 [[package]]
 name = "parse-trial-labs"
-version = "0.4.1"
+version = "0.4.2"
 source = { editable = "." }
 dependencies = [
     { name = "pandas" },
