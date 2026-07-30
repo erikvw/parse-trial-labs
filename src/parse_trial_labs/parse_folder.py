@@ -1,16 +1,26 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import sys
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pdfplumber
 from tqdm import tqdm
+
+try:
+    from django.utils.timezone import now
+except ImportError:
+    from datetime import datetime
+
+    def now() -> datetime:
+        return datetime.now(tz=UTC)
+
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +49,19 @@ def _hash_text(path: Path) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _find_duplicate_files(pdf_file_paths: list[Path]) -> dict[Path, Path]:
+def _load_duplicate_mapping(path: Path) -> dict[Path, Path]:
+    data: dict[str, str] = json.loads(path.read_text())
+    return {Path(dup): Path(original) for dup, original in data.items()}
+
+
+def _write_duplicate_mapping(path: Path, duplicate_of: dict[Path, Path]) -> None:
+    data = {str(dup): str(original) for dup, original in duplicate_of.items()}
+    path.write_text(json.dumps(data, indent=2, sort_keys=True))
+
+
+def _find_duplicate_files(
+    pdf_file_paths: list[Path], *, verbose: bool = True
+) -> dict[Path, Path]:
     """Map each duplicate file to the first-seen file it duplicates.
 
     Checks exact byte content first (cheap), then falls back to the
@@ -51,7 +73,12 @@ def _find_duplicate_files(pdf_file_paths: list[Path]) -> dict[Path, Path]:
     seen_by_bytes: dict[str, Path] = {}
     seen_by_text: dict[str, Path] = {}
     duplicate_of: dict[Path, Path] = {}
-    for path in pdf_file_paths:
+    iterator = (
+        tqdm(pdf_file_paths, desc="Scanning for duplicates", unit="file")
+        if verbose
+        else pdf_file_paths
+    )
+    for path in iterator:
         try:
             byte_digest = _hash_bytes(path)
         except OSError:
@@ -75,7 +102,7 @@ def _find_duplicate_files(pdf_file_paths: list[Path]) -> dict[Path, Path]:
     return duplicate_of
 
 
-def parse_folder(
+def parse_folder(  # noqa: PLR0912 PLR0913
     folder: str | Path,
     parser_func: Callable[str | Path, ZoneInfo | None],
     *,
@@ -83,16 +110,15 @@ def parse_folder(
     is_valid_identifier_func: Callable | None = None,
     verbose: bool = True,
     log_path: str | Path | None = None,
+    duplicates_json_path: str | Path | None = None,
 ) -> pd.DataFrame:
     folder = Path(folder)
     pdf_file_paths = sorted(folder.glob("*.pdf"))
     all_rows: list[dict] = []
 
-    log_path = (
-        Path(log_path)
-        if log_path
-        else folder / f"parse_session_{datetime.now():%Y%m%d_%H%M%S}.log"  # noqa: DTZ005
-    )
+    ts = now().strftime("%Y%m%d_%H%M%S")
+    log_path = Path(log_path) if log_path else folder / f"parse_session_{ts}.log"
+    duplicates_json_path = Path(duplicates_json_path) if duplicates_json_path else None
     file_handler = logging.FileHandler(log_path)
     file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     dup_handler = _DuplicateTrackingHandler()
@@ -100,7 +126,12 @@ def parse_folder(
     pkg_logger.addHandler(file_handler)
     pkg_logger.addHandler(dup_handler)
 
-    duplicate_of = _find_duplicate_files(pdf_file_paths)
+    if duplicates_json_path and duplicates_json_path.exists():
+        duplicate_of = _load_duplicate_mapping(duplicates_json_path)
+    else:
+        duplicate_of = _find_duplicate_files(pdf_file_paths, verbose=verbose)
+        duplicates_json_path = folder / f"parse_session_{ts}.duplicates.json"
+        _write_duplicate_mapping(duplicates_json_path, duplicate_of)
     for dup_path, original_path in sorted(duplicate_of.items()):
         logger.warning(
             "Duplicate file skipped: %s is a duplicate of %s",

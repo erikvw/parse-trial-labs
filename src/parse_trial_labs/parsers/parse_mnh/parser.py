@@ -256,12 +256,14 @@ def parse_name_id(
 ):
     subject_identifier = ""
     screening_identifier = ""
-    if is_valid_identifier_func is not None:
+    if name_id:
         identifier = extract_identifier_from_name_id(name_id)
         screening_identifier = "".join(re.findall(r"[0-9A-Z]", identifier))
         if len(screening_identifier) != 8:
             screening_identifier = ""
             with contextlib.suppress(ValueError):
-                if is_valid_identifier_func(identifier):
+                if is_valid_identifier_func is not None and is_valid_identifier_func(
+                    identifier
+                ):
                     subject_identifier = identifier
     return subject_identifier, screening_identifier
