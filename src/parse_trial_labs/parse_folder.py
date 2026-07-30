@@ -93,7 +93,7 @@ def _find_duplicate_files(
     return duplicate_of
 
 
-def parse_folder(
+def parse_folder(  # noqa: PLR0912 PLR0913
     folder: str | Path,
     parser_func: Callable[str | Path, ZoneInfo | None],
     *,
@@ -108,9 +108,7 @@ def parse_folder(
     all_rows: list[dict] = []
 
     ts = now().strftime("%Y%m%d_%H%M%S")
-    log_path = (
-        Path(log_path) if log_path else folder / f"parse_session_{ts}.log"  # noqa: DTZ005
-    )
+    log_path = Path(log_path) if log_path else folder / f"parse_session_{ts}.log"
     duplicates_json_path = Path(duplicates_json_path) if duplicates_json_path else None
     file_handler = logging.FileHandler(log_path)
     file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))

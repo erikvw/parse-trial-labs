@@ -32,8 +32,6 @@ def main() -> None:
     sys.stdout.write(f"\n{len(df)} results from {df['source_file'].nunique()} files\n")
     sys.stdout.write(df.to_string(index=False))
 
-    csv_out = (
-        target / "lab_results.csv" if target.is_dir() else target.with_suffix(".csv")
-    )
+    csv_out = target / "lab_results.csv" if target.is_dir() else target.with_suffix(".csv")
     df.to_csv(csv_out, index=False)
     sys.stdout.write(f"\nSaved to {csv_out}\n")
