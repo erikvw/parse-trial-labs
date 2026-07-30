@@ -5,13 +5,22 @@ import json
 import logging
 import sys
 from collections.abc import Callable
+from datetime import UTC
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import pdfplumber
-from django.utils.timezone import now
 from tqdm import tqdm
+
+try:
+    from django.utils.timezone import now
+except ImportError:
+    from datetime import datetime
+
+    def now() -> datetime:
+        return datetime.now(tz=UTC)
+
 
 logger = logging.getLogger(__name__)
 

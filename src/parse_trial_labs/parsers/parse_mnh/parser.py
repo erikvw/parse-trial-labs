@@ -262,6 +262,8 @@ def parse_name_id(
         if len(screening_identifier) != 8:
             screening_identifier = ""
             with contextlib.suppress(ValueError):
-                if is_valid_identifier_func(identifier):
+                if is_valid_identifier_func is not None and is_valid_identifier_func(
+                    identifier
+                ):
                     subject_identifier = identifier
     return subject_identifier, screening_identifier
