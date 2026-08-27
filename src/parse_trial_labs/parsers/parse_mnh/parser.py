@@ -27,19 +27,55 @@ def _parse_header_field(text: str, pattern: str) -> str:
 
 
 def _parse_datetime_field(
-    text: str, label: str, *, tz: ZoneInfo | None = None
+    text: str,
+    label: str,
+    *,
+    tz: ZoneInfo,
+    field: str = "",
+    source_file: str = "",
 ) -> datetime | None:
+    """Parse the `Date ... Time ...` pair that follows `label` on a report row.
+
+    Returns None when the row is absent, which is normal (an unverified
+    report has an empty `Verified By` row). A row that is present but whose
+    date/time cannot be read is a data problem rather than an absence, so it
+    is logged instead of being dropped silently.
+    """
     m = re.search(rf"{label}\s+(\d{{2}}/\d{{2}}/\d{{4}})\s+Time\s+(\S+)", text)
-    if m:
-        raw = f"{m.group(1)} {m.group(2)}"
-        try:
-            dt = datetime.strptime(raw, DATETIME_FORMAT)  # noqa: DTZ007
-        except ValueError:
-            return None
-        if tz:
-            dt = dt.replace(tzinfo=tz)
-        return dt
-    return None
+    if not m:
+        if re.search(label, text):
+            logger.warning(
+                "No date/time found for %s in %s. Got row %r",
+                field or label,
+                source_file or "<unknown>",
+                _row_for_label(text, label),
+                extra={"source_file": source_file},
+            )
+        return None
+    raw = f"{m.group(1)} {m.group(2)}"
+    try:
+        dt = datetime.strptime(raw, DATETIME_FORMAT)  # noqa: DTZ007
+    except ValueError:
+        logger.warning(
+            "Unparsed date/time %r for %s in %s. Expected format %r",
+            raw,
+            field or label,
+            source_file or "<unknown>",
+            DATETIME_FORMAT,
+            extra={"source_file": source_file},
+        )
+        return None
+    return dt.replace(tzinfo=tz)
+
+
+def _row_for_label(text: str, label: str) -> str:
+    """Return the report row `label` matched, to give the warning some context."""
+    m = re.search(label, text)
+    if not m:
+        return ""
+    start = text.rfind("\n", 0, m.start()) + 1
+    end = text.find("\n", m.start())
+    return text[start:] if end == -1 else text[start:end]
 
 
 def _parse_result_line(line: str) -> dict | None:
@@ -131,9 +167,10 @@ def _dedupe_result_rows(rows: list[dict], filepath: Path) -> list[dict]:
 def parse(
     filepath: str | Path,
     *,
-    tz: ZoneInfo | None = None,
+    tz: ZoneInfo,
     is_valid_identifier_func: Callable | None = None,
 ) -> list[dict]:
+    """Parse one MNH lab report PDF into one row per investigation."""
     filepath = Path(filepath)
     rows = []
 
@@ -160,22 +197,40 @@ def parse(
             ordered_by = _parse_header_field(full_text, r"Ordered By\s+(.+?)(?:\s+Contact)")
             clinic_ward = _parse_header_field(full_text, r"Clinic / Ward\s+(.+?)(?:\n|$)")
             order_no = _parse_header_field(full_text, r"Order No\s+(\S+)")
-            order_datetime = _parse_datetime_field(full_text, r"Order No\s+\S+\s+Date", tz=tz)
+            order_datetime = _parse_datetime_field(
+                full_text,
+                r"Order No\s+\S+\s+Date",
+                tz=tz,
+                field="order_datetime",
+                source_file=filepath.name,
+            )
             result_no = _parse_header_field(full_text, r"Result No\s+(\S+)")
             result_datetime = _parse_datetime_field(
-                full_text, r"Result No\s+\S+\s+Date", tz=tz
+                full_text,
+                r"Result No\s+\S+\s+Date",
+                tz=tz,
+                field="result_datetime",
+                source_file=filepath.name,
             )
             specimen_collected_by = _parse_header_field(
                 full_text, r"Specimen Collected By\s+(.+?)\s+Date"
             )
             specimen_collected_datetime = _parse_datetime_field(
-                full_text, r"Specimen Collected By\s+.+?\s+Date", tz=tz
+                full_text,
+                r"Specimen Collected By\s+.+?\s+Date",
+                tz=tz,
+                field="specimen_collected_datetime",
+                source_file=filepath.name,
             )
             specimen_received_by = _parse_header_field(
                 full_text, r"Specimen Recieved By\s+(.+?)\s+Date"
             )
             specimen_received_datetime = _parse_datetime_field(
-                full_text, r"Specimen Recieved By\s+.+?\s+Date", tz=tz
+                full_text,
+                r"Specimen Recieved By\s+.+?\s+Date",
+                tz=tz,
+                field="specimen_received_datetime",
+                source_file=filepath.name,
             )
             sample_type = _parse_header_field(full_text, r"Sample Type\s+(\S+)")
             sample_condition = _parse_header_field(
@@ -185,11 +240,19 @@ def parse(
             priority = _parse_header_field(full_text, r"Priority\s+(\w+)")
             reported_by = _parse_header_field(full_text, r"Reported By\s+(.+?)\s+Date")
             reported_datetime = _parse_datetime_field(
-                full_text, r"Reported By\s+.+?\s+Date", tz=tz
+                full_text,
+                r"Reported By\s+.+?\s+Date",
+                tz=tz,
+                field="reported_datetime",
+                source_file=filepath.name,
             )
             verified_by = _parse_header_field(full_text, r"Verified By\s+(.+?)\s+Date")
             verified_datetime = _parse_datetime_field(
-                full_text, r"Verified By\s+.+?\s+Date", tz=tz
+                full_text,
+                r"Verified By\s+.+?\s+Date",
+                tz=tz,
+                field="verified_datetime",
+                source_file=filepath.name,
             )
 
             # parse name_id

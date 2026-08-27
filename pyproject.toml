@@ -1,6 +1,6 @@
 [project]
 name = "parse-trial-labs"
-version = "0.5.0"
+version = "0.6.0"
 description = "Parse laboratory result PDFs from Muhimbili National Hospital, Dar Es Salaam, Tanzania"
 authors = [
     { name = "Erik van Widenfelt", email = "ew2789@gmail.com" },
@@ -45,9 +45,6 @@ docs = [
     "sphinx-design>=0.6.1",
     "sphinx-inline-tabs>=2023.4.21",
 ]
-
-[project.scripts]
-parse-trial-labs = "parse_trial_labs.main:main"
 
 [build-system]
 requires = ["uv_build>=0.7.2,<1"]
