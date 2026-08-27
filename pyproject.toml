@@ -46,9 +46,6 @@ docs = [
     "sphinx-inline-tabs>=2023.4.21",
 ]
 
-[project.scripts]
-parse-trial-labs = "parse_trial_labs.main:main"
-
 [build-system]
 requires = ["uv_build>=0.7.2,<1"]
 build-backend = "uv_build"

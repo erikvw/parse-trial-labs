@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import shutil
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -17,11 +18,15 @@ from parse_trial_labs.parsers.parse_mnh.parser import (
 
 from .fake_pdf import (
     CHEMISTRY_TEXT,
+    _text_to_pdf,
     generate_fake_chemistry,
     generate_fake_folder,
     generate_fake_haematology,
     generate_fake_immunology,
 )
+
+LOGGER_NAME = "parse_trial_labs.parsers.parse_mnh.parser"
+TZ = ZoneInfo("Africa/Dar_es_Salaam")
 
 # --- Unit tests: _parse_result_line ---
 
@@ -155,10 +160,10 @@ class TestParseHeaderFields:
     def test_missing_field_returns_empty(self):
         assert _parse_header_field(self.SAMPLE_HEADER, r"IP Number\s+(\S+)") == ""
 
-    def test_datetime_naive_without_tz(self):
-        val = _parse_datetime_field(self.SAMPLE_HEADER, r"Order No\s+\S+\s+Date")
-        assert val == datetime(2026, 1, 1, 10, 0, 0)  # noqa: DTZ001
-        assert val.tzinfo is None
+    def test_tz_is_required(self):
+        """Omitting tz must fail loudly rather than yield a naive datetime."""
+        with pytest.raises(TypeError):
+            _parse_datetime_field(self.SAMPLE_HEADER, r"Order No\s+\S+\s+Date")
 
     def test_datetime_aware_with_tz(self):
         tz = ZoneInfo("Africa/Dar_es_Salaam")
@@ -167,30 +172,95 @@ class TestParseHeaderFields:
         assert val.tzinfo is tz
 
     def test_result_datetime(self):
-        val = _parse_datetime_field(self.SAMPLE_HEADER, r"Result No\s+\S+\s+Date")
-        assert val == datetime(2026, 1, 1, 14, 30, 0)  # noqa: DTZ001
+        val = _parse_datetime_field(self.SAMPLE_HEADER, r"Result No\s+\S+\s+Date", tz=TZ)
+        assert val == datetime(2026, 1, 1, 14, 30, 0, tzinfo=TZ)
 
     def test_specimen_collected_datetime(self):
-        val = _parse_datetime_field(self.SAMPLE_HEADER, r"Specimen Collected By\s+.+?\s+Date")
-        assert val == datetime(2026, 1, 1, 10, 5, 0)  # noqa: DTZ001
+        val = _parse_datetime_field(
+            self.SAMPLE_HEADER, r"Specimen Collected By\s+.+?\s+Date", tz=TZ
+        )
+        assert val == datetime(2026, 1, 1, 10, 5, 0, tzinfo=TZ)
 
     def test_specimen_received_datetime(self):
-        val = _parse_datetime_field(self.SAMPLE_HEADER, r"Specimen Recieved By\s+.+?\s+Date")
-        assert val == datetime(2026, 1, 1, 10, 15, 0)  # noqa: DTZ001
+        val = _parse_datetime_field(
+            self.SAMPLE_HEADER, r"Specimen Recieved By\s+.+?\s+Date", tz=TZ
+        )
+        assert val == datetime(2026, 1, 1, 10, 15, 0, tzinfo=TZ)
 
     def test_verified_datetime(self):
-        val = _parse_datetime_field(self.SAMPLE_HEADER, r"Verified By\s+.+?\s+Date")
-        assert val == datetime(2026, 1, 1, 15, 0, 0)  # noqa: DTZ001
+        val = _parse_datetime_field(self.SAMPLE_HEADER, r"Verified By\s+.+?\s+Date", tz=TZ)
+        assert val == datetime(2026, 1, 1, 15, 0, 0, tzinfo=TZ)
 
     def test_datetime_returns_none_when_missing(self):
         text = "Verified By Date Time\n"
-        val = _parse_datetime_field(text, r"Verified By\s+.+?\s+Date")
+        val = _parse_datetime_field(text, r"Verified By\s+.+?\s+Date", tz=TZ)
         assert val is None
 
     def test_verified_by_empty_when_missing(self):
         text = "Verified By Date Time\n"
         val = _parse_header_field(text, r"Verified By\s+(.+?)\s+Date")
         assert val == ""
+
+    def test_absent_row_is_not_warned_about(self, caplog):
+        """An empty `Verified By` row is normal and must not raise a warning."""
+        text = "Verified By Date Time\n"
+        with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+            val = _parse_datetime_field(
+                text,
+                r"Verified By\s+.+?\s+Date",
+                tz=TZ,
+                field="verified_datetime",
+                source_file="report.pdf",
+            )
+        assert val is None
+        assert caplog.records == []
+
+    def test_unparsed_time_warns(self, caplog):
+        """A row that is present but whose time is unreadable must be logged."""
+        text = "Verified By SENIOR TECH BOB Date 01/01/2026 Time 3:00PM\n"
+        with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+            val = _parse_datetime_field(
+                text,
+                r"Verified By\s+.+?\s+Date",
+                tz=TZ,
+                field="verified_datetime",
+                source_file="report.pdf",
+            )
+        assert val is None
+        assert len(caplog.records) == 1
+        message = caplog.records[0].getMessage()
+        assert "verified_datetime" in message
+        assert "report.pdf" in message
+        assert "01/01/2026 3:00PM" in message
+
+    def test_missing_date_on_present_row_warns(self, caplog):
+        """A row with a name but no date is a data problem, not an absence."""
+        text = "Verified By SENIOR TECH BOB Date Time\n"
+        with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+            val = _parse_datetime_field(
+                text,
+                r"Verified By\s+.+?\s+Date",
+                tz=TZ,
+                field="verified_datetime",
+                source_file="report.pdf",
+            )
+        assert val is None
+        assert len(caplog.records) == 1
+        message = caplog.records[0].getMessage()
+        assert "verified_datetime" in message
+        assert "Verified By SENIOR TECH BOB Date Time" in message
+
+    def test_good_row_does_not_warn(self, caplog):
+        with caplog.at_level(logging.WARNING, logger=LOGGER_NAME):
+            val = _parse_datetime_field(
+                self.SAMPLE_HEADER,
+                r"Specimen Collected By\s+.+?\s+Date",
+                tz=TZ,
+                field="specimen_collected_datetime",
+                source_file="report.pdf",
+            )
+        assert val == datetime(2026, 1, 1, 10, 5, 0, tzinfo=TZ)
+        assert caplog.records == []
 
 
 # --- Integration tests: parse_mnh with fake PDFs ---
@@ -201,7 +271,7 @@ class TestParsePdfChemistry:
     def _setup(self, tmp_path):
         self.pdf_path = tmp_path / "chemistry.pdf"
         generate_fake_chemistry(self.pdf_path)
-        self.rows = parse_mnh(self.pdf_path)
+        self.rows = parse_mnh(self.pdf_path, tz=TZ)
 
     def test_row_count(self):
         assert len(self.rows) == 13
@@ -224,7 +294,9 @@ class TestParsePdfChemistry:
 
     def test_specimen_collected(self):
         assert self.rows[0]["specimen_collected_by"] == "NURSE JOHN SMITH"
-        assert self.rows[0]["specimen_collected_datetime"] == datetime(2026, 1, 1, 10, 5, 0)  # noqa: DTZ001
+        assert self.rows[0]["specimen_collected_datetime"] == datetime(
+            2026, 1, 1, 10, 5, 0, tzinfo=TZ
+        )
 
     def test_source_utestids_present(self):
         names = [r["source_utestid"] for r in self.rows]
@@ -243,10 +315,12 @@ class TestParsePdfChemistry:
 
     def test_verified_by(self):
         assert self.rows[0]["verified_by"] == "SENIOR TECH BOB"
-        assert self.rows[0]["verified_datetime"] == datetime(2026, 1, 1, 15, 0, 0)  # noqa: DTZ001
+        assert self.rows[0]["verified_datetime"] == datetime(2026, 1, 1, 15, 0, 0, tzinfo=TZ)
 
-    def test_datetimes_naive_without_tz(self):
-        assert self.rows[0]["order_datetime"].tzinfo is None
+    def test_tz_is_required(self):
+        """parse_mnh must not be callable without a timezone."""
+        with pytest.raises(TypeError):
+            parse_mnh(self.pdf_path)
 
     def test_datetimes_aware_with_tz(self, tmp_path):
         tz = ZoneInfo("Africa/Dar_es_Salaam")
@@ -259,7 +333,7 @@ class TestParsePdfHaematology:
     def _setup(self, tmp_path):
         self.pdf_path = tmp_path / "haematology.pdf"
         generate_fake_haematology(self.pdf_path)
-        self.rows = parse_mnh(self.pdf_path)
+        self.rows = parse_mnh(self.pdf_path, tz=TZ)
 
     def test_row_count(self):
         assert len(self.rows) == 19
@@ -309,7 +383,7 @@ class TestParsePdfImmunology:
     def _setup(self, tmp_path):
         self.pdf_path = tmp_path / "immunology.pdf"
         generate_fake_immunology(self.pdf_path)
-        self.rows = parse_mnh(self.pdf_path)
+        self.rows = parse_mnh(self.pdf_path, tz=TZ)
 
     def test_row_count(self):
         assert len(self.rows) == 1
@@ -334,7 +408,7 @@ class TestParseFolder:
     def _setup(self, tmp_path):
         self.folder = tmp_path / "labs"
         generate_fake_folder(self.folder)
-        self.df = parse_folder(self.folder, parse_mnh, verbose=False)
+        self.df = parse_folder(self.folder, parse_mnh, tz=TZ, verbose=False)
 
     def test_total_rows(self):
         assert len(self.df) == 33  # 13 + 19 + 1
@@ -368,6 +442,7 @@ class TestParseFolder:
             "sample_type",
             "sample_condition",
             "sample_no",
+            "source_file_sha256",
             "priority",
             "reported_by",
             "reported_datetime",
@@ -404,7 +479,7 @@ class TestParseFolder:
     def test_empty_folder(self, tmp_path):
         empty = tmp_path / "empty"
         empty.mkdir()
-        df = parse_folder(empty, parse_mnh, verbose=False)
+        df = parse_folder(empty, parse_mnh, tz=TZ, verbose=False)
         assert len(df) == 0
 
 
@@ -418,7 +493,7 @@ class TestParseFolderDuplicateFiles:
         generate_fake_chemistry(folder / "report_a.pdf")
         shutil.copyfile(folder / "report_a.pdf", folder / "report_a_copy.pdf")
 
-        df = parse_folder(folder, parse_mnh, verbose=False)
+        df = parse_folder(folder, parse_mnh, tz=TZ, verbose=False)
 
         assert set(df["source_file"].unique()) == {"report_a.pdf"}
         assert len(df) == 13
@@ -441,7 +516,7 @@ class TestParseFolderDuplicateFiles:
             folder / "report_a_resaved.pdf"
         ).read_bytes()
 
-        df = parse_folder(folder, parse_mnh, verbose=False)
+        df = parse_folder(folder, parse_mnh, tz=TZ, verbose=False)
 
         assert set(df["source_file"].unique()) == {"report_a.pdf"}
         assert len(df) == 13
@@ -453,17 +528,39 @@ class TestParseFolderDuplicateFiles:
         shutil.copyfile(folder / "report_a.pdf", folder / "report_a_copy.pdf")
         log_path = tmp_path / "session.log"
 
-        parse_folder(folder, parse_mnh, verbose=False, log_path=log_path)
+        parse_folder(folder, parse_mnh, tz=TZ, verbose=False, log_path=log_path)
 
         log_text = log_path.read_text()
         assert "report_a_copy.pdf" in log_text
         assert "report_a.pdf" in log_text
 
+    def test_collapsed_duplicate_results_logged(self, tmp_path):
+        """A duplicate result *within* one PDF is reported through the
+        package logger, unlike a duplicate *file*, which is written to
+        the log directly. Only this path exercises the log handlers.
+        """
+        folder = tmp_path / "labs"
+        folder.mkdir()
+        duplicated_line = "CREATININE 75.0 umol/L 50.4 - 98.1"
+        assert CHEMISTRY_TEXT.count(duplicated_line) == 1
+        _text_to_pdf(
+            CHEMISTRY_TEXT.replace(duplicated_line, f"{duplicated_line}\n{duplicated_line}"),
+            folder / "report_a.pdf",
+        )
+        log_path = tmp_path / "session.log"
+
+        df = parse_folder(folder, parse_mnh, tz=TZ, verbose=False, log_path=log_path)
+
+        assert (df["source_utestid"] == "CREATININE").sum() == 1
+        log_text = log_path.read_text()
+        assert "Files with duplicate results collapsed:" in log_text
+        assert "report_a.pdf: CREATININE" in log_text
+
     def test_distinct_files_not_flagged(self, tmp_path):
         folder = tmp_path / "labs"
         generate_fake_folder(folder)
 
-        df = parse_folder(folder, parse_mnh, verbose=False)
+        df = parse_folder(folder, parse_mnh, tz=TZ, verbose=False)
 
         assert set(df["source_file"].unique()) == {
             "FKP_chemistry.pdf",
